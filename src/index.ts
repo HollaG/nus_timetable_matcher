@@ -10,7 +10,8 @@ require("dotenv").config();
 
 import { db, pool } from "./db";
 import { RowDataPacket } from "mysql2";
-import { ChatDB, MemberDB, ModuleDB } from "./types/dbtypes";
+import { ChatDB, ClassDB, ClassesSelectedDB, MemberDB, ModuleDB, ModuleWithClassDB } from "./types/dbtypes";
+import { matcher } from "./matcher";
 
 const MAP_NUSMODS_SHORTHAND_TO_LESSONTYPE: {
     [key: string]: any; // todo: Fix this typescript error where for in loop variable is 'string'
@@ -126,7 +127,7 @@ bot.start(async (ctx) => {
                 [ctx.from.id]
             );
 
-            if (Array.isArray(rows) && rows.length === 0) {
+            if (Array.isArray(rows) && (rows.length === 0 || rows[0].timetableLink === "")) {
                 // no timetable submitted yet
                 ctx.reply(
                     `Please use /set [NUSMods Timetable link] to set your timetable.`
@@ -302,7 +303,7 @@ bot.command("set", async (ctx) => {
             [moduleCode]
         );
 
-        console.log(moduleInfo[0]);
+       
 
         let updatedClassInfo: ModuleDB | null = moduleInfo[0];
 
@@ -315,6 +316,8 @@ bot.command("set", async (ctx) => {
         ) {
             // Query NUSMods for the class data
             updatedClassInfo = await updateModuleAndClassesData(moduleCode);
+        } else { 
+            console.log(`Module ${moduleCode} is already up to date`)
         }
 
         confirmationText += `<b><u>${moduleCode} ${updatedClassInfo?.moduleName}</u></b>`;
@@ -322,12 +325,11 @@ bot.command("set", async (ctx) => {
         if (Object.keys(moduleSelected.timetable).length === 0) {
             const values = [
                 ctx.from.id,
-                moduleSelected.moduleCode,
-                ctx.chat.id,
+                moduleSelected.moduleCode,                
                 process.env.AY,
                 semester,
             ];
-            const query = `INSERT INTO classesselected (memberId, moduleCode, chatId, ay, semester) VALUES (?, ?, ?, ?, ?)`;
+            const query = `INSERT INTO classesselected (memberId, moduleCode, ay, semester) VALUES (?, ?, ?, ?)`;
             const [rows, fields] = await pool.query(query, values);
         }
         for (const lessonType in moduleSelected.timetable) {
@@ -337,12 +339,11 @@ bot.command("set", async (ctx) => {
                 ctx.from.id,
                 moduleSelected.moduleCode,
                 classNo,
-                lessonType,
-                ctx.chat.id,
+                MAP_NUSMODS_SHORTHAND_TO_LESSONTYPE[lessonType] || "",            
                 process.env.AY,
                 semester,
             ];
-            const query = `INSERT INTO classesselected (memberId, moduleCode, classNo, lessonType, chatId, ay, semester) VALUES (?, ?, ?, ?, ?, ?, ?)`;
+            const query = `INSERT INTO classesselected (memberId, moduleCode, classNo, lessonType, ay, semester) VALUES (?, ?, ?, ?, ?, ?)`;
             const [rows, fields] = await pool.query(query, values);
         }
     }
@@ -363,51 +364,42 @@ bot.command("view", async (ctx) => {
         const [chatGroupRow] = await db.query<ChatDB[]>(`SELECT * FROM chatlist WHERE chatId = ?`, [ctx.chat.id])
         if (!chatGroupRow[0]) return replyError(ctx, "This chat is not in the database!");
 
-        const memberIDs = chatGroupRow[0].chatMemberIDs.split(",").filter(n => n)
+        const memberIDs = chatGroupRow[0].chatMemberIDs.split(",").filter(n => n).map(n => Number(n))
+
+        console.log({memberIDs})
+
+        // Don't allow viewing if only 1 member with a timetable
+        const [membersAddedRows] = await db.query<MemberDB[]>(`SELECT * FROM memberlist WHERE memberId IN (?) AND timetableLink != ''`, [memberIDs])
+
+        // if (Array.isArray(membersAddedRows) && membersAddedRows.length < 2) { 
+        //     // less than 2 person added their timetable, disallow
+        //     return replyError(ctx, `fewer than 2 people have added their calendars - minimum of 2 people neded!`)
+        // }
+
+
+        // Get all the modules that we care about
+        const [moduleRows] = await db.query<ModuleDB[]>(`SELECT DISTINCT moduleCode FROM classesselected WHERE memberId IN (?)`, [memberIDs])
+
+        const moduleCodes = moduleRows.map(m => m.moduleCode)
+        // const classList = await db.query()
+
+
+
+        // get the list of classes
+        // const [classList] = await db.query<ClassesSelectedDB & ClassDB & ModuleDB[]>(`SELECT * FROM classesselected 
+        // LEFT JOIN classlist ON classesselected.classNo = classlist.classNo AND classesselected.moduleCode = classlist.moduleCode AND classlist.lessonType = classesselected.lessonType
+        // LEFT JOIN modulelist ON classesselected.moduleCode = modulelist.moduleCode        
+        // WHERE memberId IN (?)`, [memberIDs])
+
+        // begin logic to find matching 
+        const result = await matcher(memberIDs)
+
 
     }
 })
 
 
-// Get the timetable link
-const timetableLink =
-    "CFG1002=&CS1101S=TUT:07B,REC:11E,LEC:1&CS1231S=TUT:08B,LEC:1&IS1108=TUT:03,LEC:1&MA2001=TUT:1,LAB:2,LEC:1&RVX1000=SEC:1&RVX1002=SEC:2"; // sample: https://nusmods.com/timetable/sem-1/share?CFG1002=&CS1101S=TUT:07B,REC:11E,LEC:1&CS1231S=TUT:08B,LEC:1&IS1108=TUT:03,LEC:1&MA2001=TUT:1,LAB:2,LEC:1&RVX1000=SEC:1&RVX1002=SEC:2
 
-// get the url params
-const params = new URLSearchParams(timetableLink);
-
-const classesSelected: {
-    moduleCode: string;
-    timetable: {
-        [lessonType: string]: string;
-    };
-}[] = [];
-for (const p of params) {
-    console.log(p);
-
-    const moduleCode = p[0];
-    const selectedLessons = p[1];
-
-    const lessons = selectedLessons.split(",");
-
-    const timetable: { [key: string]: string } = {};
-    if (lessons)
-        lessons.forEach((lesson) => {
-            if (lesson.includes(":")) {
-                const lessonType = lesson.split(":")[0];
-                const classNo = lesson.split(":")[1];
-
-                timetable[lessonType] = classNo;
-            }
-        });
-
-    classesSelected.push({
-        moduleCode,
-        timetable,
-    });
-}
-
-console.log(classesSelected);
 
 // bot.help((ctx) => {
 //     ctx.reply("Send /start to receive a greeting");

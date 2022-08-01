@@ -19,6 +19,7 @@ export const updateModuleAndClassesData = async (moduleCode: string): Promise<Mo
     const ay = process.env.AY;
 
     console.log("fetching data for module: ", moduleCode);
+    console.log(`https://api.nusmods.com/v2/${ay}/modules/${moduleCode}.json`)
     try {
         const res = await fetch(
             `https://api.nusmods.com/v2/${ay}/modules/${moduleCode}.json`
@@ -45,16 +46,19 @@ export const updateModuleAndClassesData = async (moduleCode: string): Promise<Mo
 
         const classQuery = `INSERT INTO classList (moduleCode, lessonType, classNo, startTime, endTime, venue, weeks, ay, semester) VALUES ?`
         const classDataSem1 = data.semesterData[0]?.timetable.map(classItem => {
-            return [moduleCode, classItem.lessonType, classItem.classNo, classItem.startTime, classItem.endTime, classItem.venue, JSON.stringify(classItem.weeks), process.env.AY, 1]
+            return [moduleCode, classItem.lessonType, classItem.classNo, classItem.startTime, classItem.endTime, classItem.venue, JSON.stringify(classItem.weeks), process.env.AY, data.semesterData[0].semester]
         }) || []
         const classDataSem2 = data.semesterData[1]?.timetable.map(classItem => {
-            return [moduleCode, classItem.lessonType, classItem.classNo, classItem.startTime, classItem.endTime, classItem.venue, JSON.stringify(classItem.weeks), process.env.AY, 2]
+            return [moduleCode, classItem.lessonType, classItem.classNo, classItem.startTime, classItem.endTime, classItem.venue, JSON.stringify(classItem.weeks), process.env.AY, data.semesterData[1].semester]
         }) || []
+        
+        console.log(`${moduleCode} Sem1 ${classDataSem1.length} Sem2 ${classDataSem2.length}`)
         const classData = [...classDataSem1, ...classDataSem2]
 
+
+
         await pool.query(`DELETE FROM classList WHERE ay = ? AND moduleCode = ?`, [process.env.AY, moduleCode])
-        if (moduleCode === "CS1101S")
-            console.log({classQuery, classData})
+     
         await pool.query(classQuery, [classData])
         return moduleData
     } catch (e) {
@@ -75,4 +79,8 @@ export const generateInitialMessageText = (chatMembers?: MemberDB[]) => {
 
     return defaultText
 
+}
+
+export const groupByNestingKeys = (object: any, keys: string[]) => {
+    
 }
